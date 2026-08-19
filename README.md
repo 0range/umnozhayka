@@ -42,12 +42,12 @@ npm run validate:artifact
 ## Деплой
 
 Текущая рабочая версия публикуется через ChatGPT Sites. Для переноса на
-Timeweb Cloud можно подключить этот репозиторий в App Platform как Node.js
-приложение:
+Timeweb Cloud можно подключить этот репозиторий в App Platform как Frontend →
+Next.js с включённым SSR:
 
-- build command: `npm ci && npm run build`;
-- start command: `npm start`;
-- Node.js: `22.13+`;
+- build command: `npm run build:timeweb`;
+- start command: `npm run start:timeweb`;
+- Node.js: `24` (или `22.13+`);
 - переменные окружения не требуются.
 
 ## Данные
