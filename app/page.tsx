@@ -1,0 +1,607 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+
+type FactStat = {
+  attempts: number;
+  correct: number;
+  totalMs: number;
+  streak: number;
+  lastAt: number;
+};
+
+type ProgressData = {
+  version: 1;
+  facts: Record<string, FactStat>;
+  totalAnswers: number;
+  totalCorrect: number;
+  sessions: number;
+  bestStreak: number;
+  today: string;
+  todayAnswers: number;
+  todayCorrect: number;
+};
+
+type Question = {
+  a: number;
+  b: number;
+  key: string;
+  answer: number;
+  options: number[];
+};
+
+type GameMode = "choice" | "input" | "test";
+type Screen = "home" | "game" | "stats" | "summary";
+
+const STORAGE_KEY = "umnozhayka-progress-v1";
+const SOUND_KEY = "umnozhayka-sound";
+const TABLE_MIN = 2;
+const TABLE_MAX = 9;
+
+const emptyData = (): ProgressData => ({
+  version: 1,
+  facts: {},
+  totalAnswers: 0,
+  totalCorrect: 0,
+  sessions: 0,
+  bestStreak: 0,
+  today: dayKey(),
+  todayAnswers: 0,
+  todayCorrect: 0,
+});
+
+function dayKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+}
+
+function factKey(a: number, b: number) {
+  return `${Math.min(a, b)}x${Math.max(a, b)}`;
+}
+
+function parseKey(key: string) {
+  return key.split("x").map(Number) as [number, number];
+}
+
+function shuffle<T>(items: T[]) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function allFactKeys() {
+  const keys: string[] = [];
+  for (let a = TABLE_MIN; a <= TABLE_MAX; a += 1) {
+    for (let b = a; b <= TABLE_MAX; b += 1) keys.push(factKey(a, b));
+  }
+  return keys;
+}
+
+const FACT_KEYS = allFactKeys();
+
+function accuracy(stat?: FactStat) {
+  if (!stat?.attempts) return 0;
+  return stat.correct / stat.attempts;
+}
+
+function mastery(stat?: FactStat) {
+  if (!stat?.attempts) return 0;
+  const precision = accuracy(stat);
+  const confidence = Math.min(1, stat.attempts / 4);
+  const speed = stat.correct
+    ? Math.max(0, Math.min(1, (7000 - stat.totalMs / stat.attempts) / 4500))
+    : 0;
+  return Math.round((precision * 0.78 + speed * 0.22) * confidence * 100);
+}
+
+function level(stat?: FactStat) {
+  if (!stat?.attempts) return "new";
+  const score = mastery(stat);
+  if (stat.attempts >= 3 && score >= 78 && stat.streak >= 2) return "mastered";
+  if (score >= 48) return "learning";
+  return "weak";
+}
+
+function makeOptions(a: number, b: number) {
+  const answer = a * b;
+  const values = new Set<number>([answer]);
+  const candidates = shuffle([
+    answer + a,
+    answer - a,
+    answer + b,
+    answer - b,
+    (a + 1) * b,
+    Math.max(1, (a - 1) * b),
+    a * (b + 1),
+    Math.max(1, a * (b - 1)),
+    answer + 2,
+    answer - 2,
+    answer + 5,
+    answer - 5,
+  ]);
+  for (const candidate of candidates) {
+    if (candidate > 0 && candidate <= 100) values.add(candidate);
+    if (values.size === 4) break;
+  }
+  while (values.size < 4) {
+    const candidate = Math.max(2, answer + Math.floor(Math.random() * 17) - 8);
+    values.add(candidate);
+  }
+  return shuffle([...values]);
+}
+
+function buildQuestion(key: string): Question {
+  const [first, second] = parseKey(key);
+  const swap = first !== second && Math.random() > 0.5;
+  const [a, b] = swap ? [second, first] : [first, second];
+  return { a, b, key, answer: a * b, options: makeOptions(a, b) };
+}
+
+function chooseWeightedKey(data: ProgressData, mode: GameMode, recentKeys: string[]) {
+  const available = FACT_KEYS.filter((key) => !recentKeys.slice(-4).includes(key));
+  const pool = available.length ? available : FACT_KEYS;
+  if (mode === "test") return pool[Math.floor(Math.random() * pool.length)];
+
+  const weighted = pool.map((key) => {
+    const stat = data.facts[key];
+    if (!stat?.attempts) return { key, weight: 2.7 };
+    const weakness = 1 - mastery(stat) / 100;
+    const recentMistake = stat.streak === 0 ? 2.4 : 0;
+    return { key, weight: 1 + weakness * 6 + recentMistake };
+  });
+  const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+  let cursor = Math.random() * total;
+  for (const item of weighted) {
+    cursor -= item.weight;
+    if (cursor <= 0) return item.key;
+  }
+  return weighted[weighted.length - 1].key;
+}
+
+function formatPercent(value: number, total: number) {
+  if (!total) return "—";
+  return `${Math.round((value / total) * 100)}%`;
+}
+
+function averageTime(stat?: FactStat) {
+  if (!stat?.attempts) return "—";
+  return `${(stat.totalMs / stat.attempts / 1000).toFixed(1)} с`;
+}
+
+export default function Home() {
+  const [screen, setScreen] = useState<Screen>("home");
+  const [data, setData] = useState<ProgressData>(emptyData);
+  const dataRef = useRef<ProgressData>(data);
+  const [ready, setReady] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
+  const [mode, setMode] = useState<GameMode>("choice");
+  const [question, setQuestion] = useState<Question>(() => buildQuestion("2x2"));
+  const [questionNumber, setQuestionNumber] = useState(1);
+  const [target, setTarget] = useState(12);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [inputValue, setInputValue] = useState("");
+  const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
+  const [sessionCorrect, setSessionCorrect] = useState(0);
+  const [sessionStreak, setSessionStreak] = useState(0);
+  const [sessionBest, setSessionBest] = useState(0);
+  const [sessionStartedAt, setSessionStartedAt] = useState(Date.now());
+  const [sessionDuration, setSessionDuration] = useState(0);
+  const questionStartedAt = useRef(Date.now());
+  const recentKeys = useRef<string[]>([]);
+  const retryQueue = useRef<Array<{ key: string; due: number }>>([]);
+  const nextTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as ProgressData;
+        if (parsed.version === 1) {
+          if (parsed.today !== dayKey()) {
+            parsed.today = dayKey();
+            parsed.todayAnswers = 0;
+            parsed.todayCorrect = 0;
+          }
+          setData(parsed);
+          dataRef.current = parsed;
+        }
+      }
+      setSoundOn(window.localStorage.getItem(SOUND_KEY) !== "off");
+    } catch {
+      // A fresh local profile is enough if storage is unavailable.
+    }
+    setReady(true);
+    return () => {
+      if (nextTimer.current) clearTimeout(nextTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (screen !== "game" || selected !== null) return;
+      if (mode === "choice") {
+        const optionIndex = Number(event.key) - 1;
+        if (optionIndex >= 0 && optionIndex < 4) answerQuestion(question.options[optionIndex]);
+        return;
+      }
+      if (/^\d$/.test(event.key)) appendDigit(event.key);
+      if (event.key === "Backspace") setInputValue((value) => value.slice(0, -1));
+      if (event.key === "Enter") submitInput();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  function persist(next: ProgressData) {
+    dataRef.current = next;
+    setData(next);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Keep the game playable even in private browsing modes.
+    }
+  }
+
+  function playTone(kind: "correct" | "wrong") {
+    if (!soundOn) return;
+    try {
+      const AudioContextClass = window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const context = new AudioContextClass();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(kind === "correct" ? 620 : 210, context.currentTime);
+      if (kind === "correct") oscillator.frequency.exponentialRampToValueAtTime(820, context.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.07, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.18);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.18);
+    } catch {
+      // Sound is a bonus, never a blocker.
+    }
+  }
+
+  function toggleSound() {
+    const next = !soundOn;
+    setSoundOn(next);
+    window.localStorage.setItem(SOUND_KEY, next ? "on" : "off");
+  }
+
+  function nextKey(nextNumber: number) {
+    const dueIndex = retryQueue.current.findIndex((item) => item.due <= nextNumber);
+    if (dueIndex >= 0) {
+      const [retry] = retryQueue.current.splice(dueIndex, 1);
+      return retry.key;
+    }
+    return chooseWeightedKey(dataRef.current, mode, recentKeys.current);
+  }
+
+  function startGame(nextMode: GameMode) {
+    const nextTarget = nextMode === "test" ? 20 : 12;
+    setMode(nextMode);
+    setTarget(nextTarget);
+    setQuestionNumber(1);
+    setSessionCorrect(0);
+    setSessionStreak(0);
+    setSessionBest(0);
+    setSessionStartedAt(Date.now());
+    setSessionDuration(0);
+    setSelected(null);
+    setInputValue("");
+    setFeedback(null);
+    retryQueue.current = [];
+    recentKeys.current = [];
+    const key = chooseWeightedKey(dataRef.current, nextMode, []);
+    recentKeys.current.push(key);
+    setQuestion(buildQuestion(key));
+    questionStartedAt.current = Date.now();
+    setScreen("game");
+  }
+
+  function appendDigit(digit: string) {
+    setInputValue((value) => (value.length < 2 ? `${value}${digit}` : value));
+  }
+
+  function submitInput() {
+    if (!inputValue || selected !== null) return;
+    answerQuestion(Number(inputValue));
+  }
+
+  function answerQuestion(value: number) {
+    if (selected !== null) return;
+    const isCorrect = value === question.answer;
+    const elapsed = Math.min(30000, Math.max(400, Date.now() - questionStartedAt.current));
+    const oldStat = dataRef.current.facts[question.key] ?? { attempts: 0, correct: 0, totalMs: 0, streak: 0, lastAt: 0 };
+    const newStreak = isCorrect ? oldStat.streak + 1 : 0;
+    const todayChanged = dataRef.current.today !== dayKey();
+    const next: ProgressData = {
+      ...dataRef.current,
+      today: dayKey(),
+      todayAnswers: (todayChanged ? 0 : dataRef.current.todayAnswers) + 1,
+      todayCorrect: (todayChanged ? 0 : dataRef.current.todayCorrect) + (isCorrect ? 1 : 0),
+      totalAnswers: dataRef.current.totalAnswers + 1,
+      totalCorrect: dataRef.current.totalCorrect + (isCorrect ? 1 : 0),
+      bestStreak: Math.max(dataRef.current.bestStreak, isCorrect ? sessionStreak + 1 : sessionStreak),
+      facts: {
+        ...dataRef.current.facts,
+        [question.key]: {
+          attempts: oldStat.attempts + 1,
+          correct: oldStat.correct + (isCorrect ? 1 : 0),
+          totalMs: oldStat.totalMs + elapsed,
+          streak: newStreak,
+          lastAt: Date.now(),
+        },
+      },
+    };
+    persist(next);
+    setSelected(value);
+    setFeedback(isCorrect ? "correct" : "wrong");
+    playTone(isCorrect ? "correct" : "wrong");
+    const nextSessionStreak = isCorrect ? sessionStreak + 1 : 0;
+    if (isCorrect) setSessionCorrect((count) => count + 1);
+    setSessionStreak(nextSessionStreak);
+    setSessionBest((best) => Math.max(best, nextSessionStreak));
+    if (!isCorrect) retryQueue.current.push({ key: question.key, due: questionNumber + 3 });
+
+    nextTimer.current = setTimeout(() => {
+      if (questionNumber >= target) {
+        const finished: ProgressData = { ...dataRef.current, sessions: dataRef.current.sessions + 1 };
+        persist(finished);
+        setSessionDuration(Date.now() - sessionStartedAt);
+        setScreen("summary");
+        return;
+      }
+      const newNumber = questionNumber + 1;
+      const key = nextKey(newNumber);
+      recentKeys.current.push(key);
+      setQuestion(buildQuestion(key));
+      setQuestionNumber(newNumber);
+      setSelected(null);
+      setInputValue("");
+      setFeedback(null);
+      questionStartedAt.current = Date.now();
+    }, isCorrect ? 650 : 1250);
+  }
+
+  const stats = useMemo(() => {
+    const mastered = FACT_KEYS.filter((key) => level(data.facts[key]) === "mastered").length;
+    const learning = FACT_KEYS.filter((key) => ["learning", "weak"].includes(level(data.facts[key]))).length;
+    const weak = FACT_KEYS
+      .filter((key) => data.facts[key]?.attempts)
+      .sort((a, b) => mastery(data.facts[a]) - mastery(data.facts[b]))
+      .slice(0, 5);
+    return { mastered, learning, weak };
+  }, [data]);
+
+  function resetProgress() {
+    if (!window.confirm("Стереть всю статистику и начать заново?")) return;
+    const fresh = emptyData();
+    persist(fresh);
+    setScreen("home");
+  }
+
+  if (!ready) return <main className="loading">Готовим примеры…</main>;
+
+  return (
+    <main className={`app screen-${screen}`}>
+      <div className="ambient ambient-one" />
+      <div className="ambient ambient-two" />
+      <header className="topbar">
+        <button className="brand" onClick={() => setScreen("home")} aria-label="На главную">
+          <span className="brand-mark" aria-hidden="true">×</span>
+          <span>Умножайка</span>
+        </button>
+        <nav className="main-nav" aria-label="Главное меню">
+          <button className={screen === "home" ? "active" : ""} onClick={() => setScreen("home")}>Играть</button>
+          <button className={screen === "stats" ? "active" : ""} onClick={() => setScreen("stats")}>Мои знания</button>
+        </nav>
+        <button className="sound-button" onClick={toggleSound} aria-label={soundOn ? "Выключить звук" : "Включить звук"}>
+          {soundOn ? "♪" : "♪̸"}
+        </button>
+      </header>
+
+      {screen === "home" && (
+        <div className="page home-page">
+          <section className="hero-card">
+            <div className="hero-copy">
+              <div className="eyebrow"><span className="live-dot" /> Тренировка на сегодня</div>
+              <h1>Привет, Соня!<br /><span>Прокачаем умножение?</span></h1>
+              <p>Выбери, как отвечать. В обоих режимах приложение само поймёт, что уже отлично получается, а что стоит повторить.</p>
+              <div className="hero-actions" aria-label="Режим тренировки">
+                <button className="primary-button" onClick={() => startGame("choice")}>
+                  <span className="button-icon" aria-hidden="true">✓</span> Выбрать ответ
+                </button>
+                <button className="secondary-button hero-secondary" onClick={() => startGame("input")}>
+                  <span className="button-icon keypad-symbol" aria-hidden="true">123</span> Ввести самому
+                </button>
+              </div>
+              <div className="today-line">
+                <span>Сегодня</span>
+                <strong>{data.todayAnswers} примеров</strong>
+                <i />
+                <strong>{formatPercent(data.todayCorrect, data.todayAnswers)} верно</strong>
+              </div>
+            </div>
+            <div className="hero-visual" aria-hidden="true">
+              <div className="orbit orbit-one" />
+              <div className="orbit orbit-two" />
+              <div className="math-card math-card-a">7 × 8</div>
+              <div className="math-card math-card-b">6 × 4</div>
+              <div className="mascot">
+                <span className="mascot-ray ray-one" />
+                <span className="mascot-ray ray-two" />
+                <span className="mascot-ray ray-three" />
+                <span className="mascot-face"><i /><i /><b /></span>
+              </div>
+              <div className="spark spark-a">✦</div>
+              <div className="spark spark-b">✦</div>
+            </div>
+          </section>
+
+          <section className="quick-grid" aria-label="Прогресс и режимы">
+            <article className="progress-card">
+              <div className="card-heading">
+                <div><span className="section-kicker">Твой прогресс</span><h2>Карта знаний</h2></div>
+                <button className="text-button" onClick={() => setScreen("stats")}>Подробнее →</button>
+              </div>
+              <div className="progress-ring-row">
+                <div className="progress-ring" style={{ "--progress": `${Math.round((stats.mastered / FACT_KEYS.length) * 100) * 3.6}deg` } as React.CSSProperties}>
+                  <div><strong>{stats.mastered}</strong><span>из {FACT_KEYS.length}</span></div>
+                </div>
+                <div className="progress-legend">
+                  <div><span className="legend-dot mastered" /><p><strong>Знаю отлично</strong><small>{stats.mastered} примеров</small></p></div>
+                  <div><span className="legend-dot learning" /><p><strong>Учу сейчас</strong><small>{stats.learning} примеров</small></p></div>
+                  <div><span className="legend-dot new" /><p><strong>Ещё не встречались</strong><small>{FACT_KEYS.length - stats.mastered - stats.learning} примеров</small></p></div>
+                </div>
+              </div>
+            </article>
+
+            <article className="mode-card test-card">
+              <div className="mode-icon keypad-symbol">123</div>
+              <div><span className="section-kicker">Тестовый режим</span><h2>Большая проверка</h2><p>20 случайных примеров. Ответ всегда вводишь сам.</p></div>
+              <button className="secondary-button" onClick={() => startGame("test")}>Начать</button>
+            </article>
+          </section>
+        </div>
+      )}
+
+      {screen === "game" && (
+        <div className="page game-page">
+          <section className={`game-card ${feedback ?? ""}`}>
+            <div className="game-head">
+              <button className="close-button" onClick={() => setScreen("home")} aria-label="Закончить тренировку">×</button>
+              <div className="game-progress" aria-label={`Пример ${questionNumber} из ${target}`}>
+                <span style={{ width: `${(questionNumber / target) * 100}%` }} />
+              </div>
+              <div className="counter">{questionNumber}<span>/{target}</span></div>
+            </div>
+            <div className="streak-pill">🔥 Серия: <strong>{sessionStreak}</strong></div>
+            <div className="question-wrap">
+              <p>{mode === "test" ? "Большая проверка" : mode === "input" ? "Введи ответ" : "Выбери ответ"}</p>
+              <div className="equation"><span>{question.a}</span><b>×</b><span>{question.b}</span><b>=</b><em>?</em></div>
+            </div>
+            {mode === "choice" ? (
+              <div className="answers-grid">
+                {question.options.map((option, index) => {
+                  const isChosen = selected === option;
+                  const isAnswer = option === question.answer;
+                  const state = selected === null ? "" : isAnswer ? "answer-correct" : isChosen ? "answer-wrong" : "muted";
+                  return (
+                    <button key={option} className={`answer-button ${state}`} onClick={() => answerQuestion(option)} disabled={selected !== null}>
+                      <span>{option}</span><small>{index + 1}</small>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="number-entry">
+                <div className={`number-display ${feedback ?? ""}`} aria-label={inputValue ? `Введено ${inputValue}` : "Ответ пока не введён"}>
+                  {inputValue || <span>Ответ</span>}
+                </div>
+                <div className="number-pad" aria-label="Цифровая клавиатура">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                    <button key={digit} onClick={() => appendDigit(String(digit))} disabled={selected !== null}>{digit}</button>
+                  ))}
+                  <button className="erase-key" onClick={() => setInputValue((value) => value.slice(0, -1))} disabled={selected !== null || !inputValue} aria-label="Стереть последнюю цифру">⌫</button>
+                  <button onClick={() => appendDigit("0")} disabled={selected !== null}>0</button>
+                  <button className="submit-key" onClick={submitInput} disabled={selected !== null || !inputValue} aria-label="Проверить ответ">Готово</button>
+                </div>
+              </div>
+            )}
+            <div className={`feedback-line ${feedback ?? ""}`} aria-live="polite">
+              {feedback === "correct" && <><strong>Отлично!</strong> Так держать ✦</>}
+              {feedback === "wrong" && <><strong>Почти!</strong> {question.a} × {question.b} = {question.answer}. Мы повторим этот пример.</>}
+              {!feedback && <span>{mode === "choice" ? "Можно нажать клавиши 1–4" : "Набери ответ и нажми «Готово»"}</span>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {screen === "summary" && (
+        <div className="page summary-page">
+          <section className="summary-card">
+            <div className="summary-burst"><span>★</span></div>
+            <span className="section-kicker">Тренировка закончена</span>
+            <h1>{sessionCorrect >= target * 0.8 ? "Суперработа!" : "Хорошая тренировка!"}</h1>
+            <p>Каждый пример делает таблицу умножения чуточку легче.</p>
+            <div className="summary-stats">
+              <div><strong>{sessionCorrect}<small>/{target}</small></strong><span>верных ответов</span></div>
+              <div><strong>{formatPercent(sessionCorrect, target)}</strong><span>точность</span></div>
+              <div><strong>{sessionBest}</strong><span>лучшая серия</span></div>
+              <div><strong>{Math.max(1, Math.round(sessionDuration / 60000))} мин</strong><span>время</span></div>
+            </div>
+            <div className="summary-actions">
+              <button className="primary-button" onClick={() => startGame(mode)}>Ещё раунд</button>
+              <button className="secondary-button" onClick={() => setScreen("stats")}>Посмотреть знания</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {screen === "stats" && (
+        <div className="page stats-page">
+          <section className="stats-intro">
+            <div><span className="section-kicker">Личная статистика</span><h1>Моя карта знаний</h1><p>Каждая клетка — один пример. Чем зеленее, тем увереннее ответ.</p></div>
+            <button className="primary-button compact" onClick={() => startGame("input")}>Тренировать слабые места</button>
+          </section>
+
+          <section className="stat-cards">
+            <article><span>Всего решено</span><strong>{data.totalAnswers}</strong><small>за {data.sessions || 0} тренировок</small></article>
+            <article><span>Точность</span><strong>{formatPercent(data.totalCorrect, data.totalAnswers)}</strong><small>{data.totalCorrect} верных ответов</small></article>
+            <article><span>Лучшая серия</span><strong>{data.bestStreak} 🔥</strong><small>ответов подряд</small></article>
+            <article><span>Знаю отлично</span><strong>{stats.mastered}</strong><small>из {FACT_KEYS.length} примеров</small></article>
+          </section>
+
+          <section className="knowledge-section">
+            <div className="card-heading">
+              <div><span className="section-kicker">Таблица 2–9</span><h2>Карта примеров</h2></div>
+              <div className="mini-legend"><span><i className="new" />Новый</span><span><i className="weak" />Повторить</span><span><i className="learning" />Учу</span><span><i className="mastered" />Знаю</span></div>
+            </div>
+            <div className="table-scroll">
+              <div className="knowledge-table" role="table" aria-label="Знание таблицы умножения">
+                <div className="corner-cell">×</div>
+                {Array.from({ length: 8 }, (_, i) => i + 2).map((value) => <div className="axis-cell" key={`h${value}`}>{value}</div>)}
+                {Array.from({ length: 8 }, (_, row) => row + 2).flatMap((a) => [
+                  <div className="axis-cell" key={`v${a}`}>{a}</div>,
+                  ...Array.from({ length: 8 }, (_, col) => col + 2).map((b) => {
+                    const key = factKey(a, b);
+                    const stat = data.facts[key];
+                    return (
+                      <div className={`fact-cell ${level(stat)}`} key={`${a}-${b}`} title={`${a} × ${b}: ${stat?.attempts ? `${Math.round(accuracy(stat) * 100)}% верно, среднее время ${averageTime(stat)}` : "ещё не было"}`}>
+                        <span>{a * b}</span>
+                        {stat?.attempts ? <small>{Math.round(accuracy(stat) * 100)}%</small> : <small>—</small>}
+                      </div>
+                    );
+                  }),
+                ])}
+              </div>
+            </div>
+          </section>
+
+          <section className="focus-section">
+            <div className="card-heading"><div><span className="section-kicker">Что подучить</span><h2>Фокус на следующую игру</h2></div></div>
+            {stats.weak.length ? (
+              <div className="focus-list">
+                {stats.weak.map((key) => {
+                  const [a, b] = parseKey(key);
+                  const stat = data.facts[key];
+                  return <div className="focus-row" key={key}><span className="focus-equation">{a} × {b}</span><div className="focus-bar"><i style={{ width: `${Math.max(8, mastery(stat))}%` }} /></div><strong>{Math.round(accuracy(stat) * 100)}%</strong><small>{stat.attempts} попыток · {averageTime(stat)}</small></div>;
+                })}
+              </div>
+            ) : (
+              <div className="empty-focus"><span>✦</span><p><strong>Сначала сыграем!</strong> После первой тренировки здесь появятся примеры для повторения.</p></div>
+            )}
+            <button className="reset-button" onClick={resetProgress}>Сбросить статистику</button>
+          </section>
+        </div>
+      )}
+    </main>
+  );
+}
