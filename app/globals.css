@@ -177,16 +177,22 @@ button:focus-visible { outline: 4px solid rgba(117, 86, 232, 0.24); outline-offs
 .stat-cards article { padding: 22px; border: 1px solid var(--line); background: var(--paper); border-radius: 20px; }
 .stat-cards span, .stat-cards small { display: block; color: var(--muted); font-size: 11px; }.stat-cards strong { display: block; font-size: 30px; margin: 7px 0 4px; letter-spacing: -.04em; }
 .knowledge-section, .focus-section { margin-top: 18px; }
-.mini-legend { display: flex; gap: 13px; flex-wrap: wrap; justify-content: flex-end; }
-.mini-legend span { display: flex; gap: 5px; align-items: center; font-size: 10px; color: var(--muted); }
-.mini-legend i { width: 9px; height: 9px; border-radius: 3px; }.mini-legend .new { background: #eeeae3; }.mini-legend .weak { background: #ffd9d1; }.mini-legend .learning { background: #fff0bc; }.mini-legend .mastered { background: #bfead6; }
+.accuracy-legend { display: flex; align-items: center; gap: 16px; color: var(--muted); }
+.empty-legend { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 10px; }
+.empty-legend i { width: 12px; height: 12px; border-radius: 4px; background: #eeeae3; border: 1px solid #ded9d0; }
+.gradient-legend { width: 180px; }
+.gradient-legend > i { display: block; width: 100%; height: 11px; border-radius: 99px; background: linear-gradient(90deg, hsl(4 84% 86%) 0%, hsl(48 84% 71%) 50%, hsl(140 84% 56%) 100%); border: 1px solid rgba(24,35,61,.09); }
+.gradient-legend > div { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; font-weight: 800; }
+.gradient-legend > small { display: block; margin-top: 3px; text-align: center; font-size: 8px; color: #858c9f; }
 .table-scroll { overflow-x: auto; padding: 20px 2px 3px; }
 .knowledge-table { display: grid; grid-template-columns: 42px repeat(8, minmax(66px, 1fr)); gap: 7px; min-width: 700px; }
 .axis-cell, .corner-cell { display: grid; place-items: center; min-height: 55px; color: var(--muted); font-weight: 900; font-size: 13px; }
 .corner-cell { color: var(--purple); font-size: 22px; }
-.fact-cell { min-height: 58px; padding: 9px 5px; border-radius: 12px; display: grid; place-items: center; align-content: center; border: 1px solid transparent; }
-.fact-cell span { font-weight: 900; font-size: 17px; line-height: 1; }.fact-cell small { font-size: 8px; color: rgba(24,35,61,.55); margin-top: 5px; }
-.fact-cell.new { background: #f1eee8; color: #a8a2aa; }.fact-cell.weak { background: #ffe2dc; border-color: #ffc8bc; color: #a84231; }.fact-cell.learning { background: #fff1be; border-color: #f4da80; color: #805d15; }.fact-cell.mastered { background: #caf0de; border-color: #a8dfc6; color: #167251; }
+.fact-cell { min-height: 66px; padding: 8px 4px; border-radius: 12px; display: grid; place-items: center; align-content: center; border: 1px solid transparent; transition: transform .16s ease, box-shadow .16s ease; }
+.fact-cell span { font-weight: 900; font-size: 17px; line-height: 1; }.fact-cell small { font-size: 10px; font-weight: 850; color: currentColor; opacity: .82; margin-top: 5px; }
+.fact-cell .attempt-count { margin-top: 2px; font-size: 8px; font-weight: 750; opacity: .64; white-space: nowrap; }
+.fact-cell.new { background: #f1eee8; border-color: #e3ded5; color: #9d97a1; }
+.fact-cell.answered:hover { transform: translateY(-2px); box-shadow: 0 7px 16px rgba(45,53,66,.12); }
 .focus-list { margin-top: 21px; display: grid; gap: 9px; }
 .focus-row { display: grid; grid-template-columns: 70px 1fr 45px 180px; gap: 15px; align-items: center; padding: 12px 14px; border-radius: 14px; background: #f8f4ed; }
 .focus-equation { font-weight: 900; }.focus-row strong { font-size: 13px; }.focus-row small { color: var(--muted); font-size: 11px; }
@@ -202,6 +208,12 @@ button:focus-visible { outline: 4px solid rgba(117, 86, 232, 0.24); outline-offs
   .quick-grid { grid-template-columns: 1fr; }
   .stat-cards { grid-template-columns: repeat(2,1fr); }
   .summary-stats { grid-template-columns: repeat(2,1fr); }
+}
+
+@media (max-width: 620px) {
+  .knowledge-section .card-heading { align-items: stretch; }
+  .accuracy-legend { justify-content: space-between; }
+  .gradient-legend { width: min(180px, 52vw); }
 }
 
 @media (max-width: 600px) {

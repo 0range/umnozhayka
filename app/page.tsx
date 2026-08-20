@@ -34,6 +34,7 @@ type GameMode = "choice" | "input" | "test";
 type Screen = "home" | "game" | "stats" | "summary";
 
 const STORAGE_KEY = "umnozhayka-progress-v1";
+const STORAGE_BACKUP_KEY = "umnozhayka-progress-backup-v1";
 const SOUND_KEY = "umnozhayka-sound";
 const TABLE_MIN = 2;
 const TABLE_MAX = 9;
@@ -82,6 +83,60 @@ function allFactKeys() {
 
 const FACT_KEYS = allFactKeys();
 
+function nonNegativeNumber(value: unknown, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function normalizeStoredProgress(raw: unknown): ProgressData {
+  const fresh = emptyData();
+  if (!raw || typeof raw !== "object") return fresh;
+
+  const source = raw as Partial<ProgressData>;
+  const sourceFacts = source.facts && typeof source.facts === "object" ? source.facts : {};
+  const facts: Record<string, FactStat> = {};
+
+  for (const key of FACT_KEYS) {
+    const candidate = sourceFacts[key] as Partial<FactStat> | undefined;
+    if (!candidate || typeof candidate !== "object") continue;
+    const attempts = Math.floor(nonNegativeNumber(candidate.attempts));
+    if (!attempts) continue;
+    facts[key] = {
+      attempts,
+      correct: Math.min(attempts, Math.floor(nonNegativeNumber(candidate.correct))),
+      totalMs: nonNegativeNumber(candidate.totalMs),
+      streak: Math.floor(nonNegativeNumber(candidate.streak)),
+      lastAt: nonNegativeNumber(candidate.lastAt),
+    };
+  }
+
+  const storedDay = typeof source.today === "string" ? source.today : fresh.today;
+  const isToday = storedDay === dayKey();
+  return {
+    version: 1,
+    facts,
+    totalAnswers: Math.floor(nonNegativeNumber(source.totalAnswers)),
+    totalCorrect: Math.floor(nonNegativeNumber(source.totalCorrect)),
+    sessions: Math.floor(nonNegativeNumber(source.sessions)),
+    bestStreak: Math.floor(nonNegativeNumber(source.bestStreak)),
+    today: dayKey(),
+    todayAnswers: isToday ? Math.floor(nonNegativeNumber(source.todayAnswers)) : 0,
+    todayCorrect: isToday ? Math.floor(nonNegativeNumber(source.todayCorrect)) : 0,
+  };
+}
+
+function loadStoredProgress(storage: Storage) {
+  for (const key of [STORAGE_KEY, STORAGE_BACKUP_KEY]) {
+    const stored = storage.getItem(key);
+    if (!stored) continue;
+    try {
+      return normalizeStoredProgress(JSON.parse(stored));
+    } catch {
+      // Try the backup before falling back to a fresh profile.
+    }
+  }
+  return null;
+}
+
 function accuracy(stat?: FactStat) {
   if (!stat?.attempts) return 0;
   return stat.correct / stat.attempts;
@@ -103,6 +158,34 @@ function level(stat?: FactStat) {
   if (stat.attempts >= 3 && score >= 78 && stat.streak >= 2) return "mastered";
   if (score >= 48) return "learning";
   return "weak";
+}
+
+function knowledgeCellColor(stat?: FactStat) {
+  if (!stat?.attempts) return undefined;
+
+  const percent = Math.round(accuracy(stat) * 100);
+  const confidence = Math.min(1, stat.attempts / 5);
+  const hue = percent <= 50
+    ? 4 + (percent / 50) * 44
+    : 48 + ((percent - 50) / 50) * 92;
+  const saturation = 66 + confidence * 18;
+  const lightness = 86 - percent * 0.3 + (1 - confidence) * 4;
+  const color = percent < 40 ? "#74291f" : percent < 65 ? "#5f5010" : "#0b5030";
+
+  return {
+    backgroundColor: `hsl(${hue} ${saturation}% ${lightness}%)`,
+    borderColor: `hsl(${hue} ${52 + confidence * 18}% ${Math.max(38, lightness - 13)}%)`,
+    color,
+  };
+}
+
+function attemptWord(attempts: number) {
+  const lastTwo = attempts % 100;
+  const last = attempts % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) return "попыток";
+  if (last === 1) return "попытка";
+  if (last >= 2 && last <= 4) return "попытки";
+  return "попыток";
 }
 
 function makeOptions(a: number, b: number) {
@@ -147,10 +230,15 @@ function chooseWeightedKey(data: ProgressData, mode: GameMode, recentKeys: strin
 
   const weighted = pool.map((key) => {
     const stat = data.facts[key];
-    if (!stat?.attempts) return { key, weight: 2.7 };
-    const weakness = 1 - mastery(stat) / 100;
+    if (!stat?.attempts) return { key, weight: 7.5 };
+    const accuracyGap = 1 - accuracy(stat);
+    const confidenceGap = 1 - Math.min(1, stat.attempts / 5);
+    const masteryGap = 1 - mastery(stat) / 100;
     const recentMistake = stat.streak === 0 ? 2.4 : 0;
-    return { key, weight: 1 + weakness * 6 + recentMistake };
+    return {
+      key,
+      weight: 0.65 + accuracyGap * 6.5 + confidenceGap * 2 + masteryGap * 1.2 + recentMistake,
+    };
   });
   const total = weighted.reduce((sum, item) => sum + item.weight, 0);
   let cursor = Math.random() * total;
@@ -196,18 +284,10 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const stored = window.localStorage.getItem(STORAGE_KEY);
+      const stored = loadStoredProgress(window.localStorage);
       if (stored) {
-        const parsed = JSON.parse(stored) as ProgressData;
-        if (parsed.version === 1) {
-          if (parsed.today !== dayKey()) {
-            parsed.today = dayKey();
-            parsed.todayAnswers = 0;
-            parsed.todayCorrect = 0;
-          }
-          setData(parsed);
-          dataRef.current = parsed;
-        }
+        setData(stored);
+        dataRef.current = stored;
       }
       setSoundOn(window.localStorage.getItem(SOUND_KEY) !== "off");
     } catch {
@@ -239,7 +319,12 @@ export default function Home() {
     dataRef.current = next;
     setData(next);
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      const serialized = JSON.stringify(next);
+      const previous = window.localStorage.getItem(STORAGE_KEY);
+      if (previous && previous !== serialized) {
+        window.localStorage.setItem(STORAGE_BACKUP_KEY, previous);
+      }
+      window.localStorage.setItem(STORAGE_KEY, serialized);
     } catch {
       // Keep the game playable even in private browsing modes.
     }
@@ -548,7 +633,7 @@ export default function Home() {
       {screen === "stats" && (
         <div className="page stats-page">
           <section className="stats-intro">
-            <div><span className="section-kicker">Личная статистика</span><h1>Моя карта знаний</h1><p>Каждая клетка — один пример. Чем зеленее, тем увереннее ответ.</p></div>
+            <div><span className="section-kicker">Личная статистика</span><h1>Моя карта знаний</h1><p>Каждая клетка — один пример. Цвет показывает процент правильных ответов.</p></div>
             <button className="primary-button compact" onClick={() => startGame("input")}>Тренировать слабые места</button>
           </section>
 
@@ -562,7 +647,14 @@ export default function Home() {
           <section className="knowledge-section">
             <div className="card-heading">
               <div><span className="section-kicker">Таблица 2–9</span><h2>Карта примеров</h2></div>
-              <div className="mini-legend"><span><i className="new" />Новый</span><span><i className="weak" />Повторить</span><span><i className="learning" />Учу</span><span><i className="mastered" />Знаю</span></div>
+              <div className="accuracy-legend" aria-label="Шкала точности: от красного через жёлтый к зелёному">
+                <span className="empty-legend"><i />Нет ответов</span>
+                <div className="gradient-legend">
+                  <i />
+                  <div><span>0%</span><span>50%</span><span>100%</span></div>
+                  <small>Ярче — больше попыток</small>
+                </div>
+              </div>
             </div>
             <div className="table-scroll">
               <div className="knowledge-table" role="table" aria-label="Знание таблицы умножения">
@@ -574,9 +666,14 @@ export default function Home() {
                     const key = factKey(a, b);
                     const stat = data.facts[key];
                     return (
-                      <div className={`fact-cell ${level(stat)}`} key={`${a}-${b}`} title={`${a} × ${b}: ${stat?.attempts ? `${Math.round(accuracy(stat) * 100)}% верно, среднее время ${averageTime(stat)}` : "ещё не было"}`}>
+                      <div className={`fact-cell ${stat?.attempts ? "answered" : "new"}`} style={knowledgeCellColor(stat)} key={`${a}-${b}`} title={`${a} × ${b}: ${stat?.attempts ? `${Math.round(accuracy(stat) * 100)}% верно, среднее время ${averageTime(stat)}` : "ещё не было"}`}>
                         <span>{a * b}</span>
-                        {stat?.attempts ? <small>{Math.round(accuracy(stat) * 100)}%</small> : <small>—</small>}
+                        {stat?.attempts ? (
+                          <>
+                            <small>{Math.round(accuracy(stat) * 100)}%</small>
+                            <small className="attempt-count">{stat.attempts} {attemptWord(stat.attempts)}</small>
+                          </>
+                        ) : <small>—</small>}
                       </div>
                     );
                   }),
