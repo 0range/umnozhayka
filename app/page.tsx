@@ -6,6 +6,7 @@ type FactStat = {
   attempts: number;
   correct: number;
   totalMs: number;
+  timesMs: number[];
   streak: number;
   lastAt: number;
 };
@@ -38,6 +39,7 @@ const STORAGE_BACKUP_KEY = "umnozhayka-progress-backup-v1";
 const SOUND_KEY = "umnozhayka-sound";
 const TABLE_MIN = 2;
 const TABLE_MAX = 9;
+const TIME_SAMPLE_LIMIT = 25;
 
 const emptyData = (): ProgressData => ({
   version: 1,
@@ -100,10 +102,22 @@ function normalizeStoredProgress(raw: unknown): ProgressData {
     if (!candidate || typeof candidate !== "object") continue;
     const attempts = Math.floor(nonNegativeNumber(candidate.attempts));
     if (!attempts) continue;
+    const recordedTimes = Array.isArray(candidate.timesMs)
+      ? candidate.timesMs
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 400)
+        .map((value) => Math.min(30000, value))
+        .slice(-TIME_SAMPLE_LIMIT)
+      : [];
+    const legacyAverage = nonNegativeNumber(candidate.totalMs) / attempts;
     facts[key] = {
       attempts,
       correct: Math.min(attempts, Math.floor(nonNegativeNumber(candidate.correct))),
       totalMs: nonNegativeNumber(candidate.totalMs),
+      timesMs: recordedTimes.length
+        ? recordedTimes
+        : legacyAverage >= 400
+          ? [Math.min(30000, legacyAverage)]
+          : [],
       streak: Math.floor(nonNegativeNumber(candidate.streak)),
       lastAt: nonNegativeNumber(candidate.lastAt),
     };
@@ -142,14 +156,26 @@ function accuracy(stat?: FactStat) {
   return stat.correct / stat.attempts;
 }
 
+function medianTimeMs(stat?: FactStat) {
+  if (!stat?.timesMs.length) return 0;
+  const values = [...stat.timesMs].sort((a, b) => a - b);
+  const middle = Math.floor(values.length / 2);
+  return values.length % 2
+    ? values[middle]
+    : (values[middle - 1] + values[middle]) / 2;
+}
+
+function speedScore(stat?: FactStat) {
+  const median = medianTimeMs(stat);
+  if (!median) return 0;
+  return Math.max(0, Math.min(1, (9000 - median) / 6000));
+}
+
 function mastery(stat?: FactStat) {
   if (!stat?.attempts) return 0;
   const precision = accuracy(stat);
-  const confidence = Math.min(1, stat.attempts / 4);
-  const speed = stat.correct
-    ? Math.max(0, Math.min(1, (7000 - stat.totalMs / stat.attempts) / 4500))
-    : 0;
-  return Math.round((precision * 0.78 + speed * 0.22) * confidence * 100);
+  const speed = speedScore(stat);
+  return Math.round((precision * 0.72 + speed * 0.28) * 100);
 }
 
 function level(stat?: FactStat) {
@@ -164,28 +190,19 @@ function knowledgeCellColor(stat?: FactStat) {
   if (!stat?.attempts) return undefined;
 
   const percent = Math.round(accuracy(stat) * 100);
-  const confidence = Math.min(1, stat.attempts / 5);
+  const speed = speedScore(stat);
   const hue = percent <= 50
     ? 4 + (percent / 50) * 44
     : 48 + ((percent - 50) / 50) * 92;
-  const saturation = 66 + confidence * 18;
-  const lightness = 86 - percent * 0.3 + (1 - confidence) * 4;
+  const saturation = 55 + speed * 29;
+  const lightness = 87 - percent * 0.29 + (1 - speed) * 5;
   const color = percent < 40 ? "#74291f" : percent < 65 ? "#5f5010" : "#0b5030";
 
   return {
     backgroundColor: `hsl(${hue} ${saturation}% ${lightness}%)`,
-    borderColor: `hsl(${hue} ${52 + confidence * 18}% ${Math.max(38, lightness - 13)}%)`,
+    borderColor: `hsl(${hue} ${48 + speed * 22}% ${Math.max(38, lightness - 13)}%)`,
     color,
   };
-}
-
-function attemptWord(attempts: number) {
-  const lastTwo = attempts % 100;
-  const last = attempts % 10;
-  if (lastTwo >= 11 && lastTwo <= 14) return "попыток";
-  if (last === 1) return "попытка";
-  if (last >= 2 && last <= 4) return "попытки";
-  return "попыток";
 }
 
 function makeOptions(a: number, b: number) {
@@ -232,12 +249,11 @@ function chooseWeightedKey(data: ProgressData, mode: GameMode, recentKeys: strin
     const stat = data.facts[key];
     if (!stat?.attempts) return { key, weight: 7.5 };
     const accuracyGap = 1 - accuracy(stat);
-    const confidenceGap = 1 - Math.min(1, stat.attempts / 5);
-    const masteryGap = 1 - mastery(stat) / 100;
+    const slowness = 1 - speedScore(stat);
     const recentMistake = stat.streak === 0 ? 2.4 : 0;
     return {
       key,
-      weight: 0.65 + accuracyGap * 6.5 + confidenceGap * 2 + masteryGap * 1.2 + recentMistake,
+      weight: 0.7 + accuracyGap * 7 + slowness * 4 + recentMistake,
     };
   });
   const total = weighted.reduce((sum, item) => sum + item.weight, 0);
@@ -254,9 +270,10 @@ function formatPercent(value: number, total: number) {
   return `${Math.round((value / total) * 100)}%`;
 }
 
-function averageTime(stat?: FactStat) {
-  if (!stat?.attempts) return "—";
-  return `${(stat.totalMs / stat.attempts / 1000).toFixed(1)} с`;
+function medianTime(stat?: FactStat) {
+  const median = medianTimeMs(stat);
+  if (!median) return "—";
+  return `${(median / 1000).toFixed(1)} с`;
 }
 
 export default function Home() {
@@ -403,7 +420,7 @@ export default function Home() {
     if (selected !== null) return;
     const isCorrect = value === question.answer;
     const elapsed = Math.min(30000, Math.max(400, Date.now() - questionStartedAt.current));
-    const oldStat = dataRef.current.facts[question.key] ?? { attempts: 0, correct: 0, totalMs: 0, streak: 0, lastAt: 0 };
+    const oldStat = dataRef.current.facts[question.key] ?? { attempts: 0, correct: 0, totalMs: 0, timesMs: [], streak: 0, lastAt: 0 };
     const newStreak = isCorrect ? oldStat.streak + 1 : 0;
     const todayChanged = dataRef.current.today !== dayKey();
     const next: ProgressData = {
@@ -420,6 +437,7 @@ export default function Home() {
           attempts: oldStat.attempts + 1,
           correct: oldStat.correct + (isCorrect ? 1 : 0),
           totalMs: oldStat.totalMs + elapsed,
+          timesMs: [...oldStat.timesMs, elapsed].slice(-TIME_SAMPLE_LIMIT),
           streak: newStreak,
           lastAt: Date.now(),
         },
@@ -633,7 +651,7 @@ export default function Home() {
       {screen === "stats" && (
         <div className="page stats-page">
           <section className="stats-intro">
-            <div><span className="section-kicker">Личная статистика</span><h1>Моя карта знаний</h1><p>Каждая клетка — один пример. Цвет показывает процент правильных ответов.</p></div>
+            <div><span className="section-kicker">Личная статистика</span><h1>Моя карта знаний</h1><p>Оттенок показывает точность, а насыщенность — скорость ответа.</p></div>
             <button className="primary-button compact" onClick={() => startGame("input")}>Тренировать слабые места</button>
           </section>
 
@@ -652,7 +670,7 @@ export default function Home() {
                 <div className="gradient-legend">
                   <i />
                   <div><span>0%</span><span>50%</span><span>100%</span></div>
-                  <small>Ярче — больше попыток</small>
+                  <small>Ярче — быстрее ответ</small>
                 </div>
               </div>
             </div>
@@ -666,12 +684,12 @@ export default function Home() {
                     const key = factKey(a, b);
                     const stat = data.facts[key];
                     return (
-                      <div className={`fact-cell ${stat?.attempts ? "answered" : "new"}`} style={knowledgeCellColor(stat)} key={`${a}-${b}`} title={`${a} × ${b}: ${stat?.attempts ? `${Math.round(accuracy(stat) * 100)}% верно, среднее время ${averageTime(stat)}` : "ещё не было"}`}>
+                      <div className={`fact-cell ${stat?.attempts ? "answered" : "new"}`} style={knowledgeCellColor(stat)} key={`${a}-${b}`} title={`${a} × ${b}: ${stat?.attempts ? `${Math.round(accuracy(stat) * 100)}% верно, медиана ${medianTime(stat)}` : "ещё не было"}`}>
                         <span>{a * b}</span>
                         {stat?.attempts ? (
                           <>
                             <small>{Math.round(accuracy(stat) * 100)}%</small>
-                            <small className="attempt-count">{stat.attempts} {attemptWord(stat.attempts)}</small>
+                            <small className="time-count">{medianTime(stat)}</small>
                           </>
                         ) : <small>—</small>}
                       </div>
@@ -689,7 +707,7 @@ export default function Home() {
                 {stats.weak.map((key) => {
                   const [a, b] = parseKey(key);
                   const stat = data.facts[key];
-                  return <div className="focus-row" key={key}><span className="focus-equation">{a} × {b}</span><div className="focus-bar"><i style={{ width: `${Math.max(8, mastery(stat))}%` }} /></div><strong>{Math.round(accuracy(stat) * 100)}%</strong><small>{stat.attempts} попыток · {averageTime(stat)}</small></div>;
+                  return <div className="focus-row" key={key}><span className="focus-equation">{a} × {b}</span><div className="focus-bar"><i style={{ width: `${Math.max(8, mastery(stat))}%` }} /></div><strong>{Math.round(accuracy(stat) * 100)}%</strong><small>медиана {medianTime(stat)}</small></div>;
                 })}
               </div>
             ) : (
