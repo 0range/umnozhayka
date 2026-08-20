@@ -100,9 +100,9 @@ button:focus-visible { outline: 4px solid rgba(117, 86, 232, 0.24); outline-offs
 .spark-b { left: 64px; bottom: 72px; font-size: 18px; }
 
 .quick-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 18px; margin-top: 18px; }
-.progress-card, .mode-card, .knowledge-section, .focus-section { border: 1px solid var(--line); background: rgba(255,253,248,.95); border-radius: 26px; padding: 26px 30px; }
+.progress-card, .mode-card, .weekly-section, .knowledge-section, .focus-section { border: 1px solid var(--line); background: rgba(255,253,248,.95); border-radius: 26px; padding: 26px 30px; }
 .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.card-heading h2, .mode-card h2, .knowledge-section h2, .focus-section h2 { margin: 5px 0 0; font-size: 22px; letter-spacing: -.025em; }
+.card-heading h2, .mode-card h2, .weekly-section h2, .knowledge-section h2, .focus-section h2 { margin: 5px 0 0; font-size: 22px; letter-spacing: -.025em; }
 .text-button { border: 0; background: transparent; color: var(--purple); font-weight: 800; cursor: pointer; padding: 4px; }
 .progress-ring-row { display: flex; align-items: center; gap: 40px; padding-top: 21px; }
 .progress-ring { --progress: 0deg; width: 120px; height: 120px; flex: 0 0 120px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--green) var(--progress), #eae6df 0); position: relative; }
@@ -176,7 +176,21 @@ button:focus-visible { outline: 4px solid rgba(117, 86, 232, 0.24); outline-offs
 .stat-cards { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 18px; }
 .stat-cards article { padding: 22px; border: 1px solid var(--line); background: var(--paper); border-radius: 20px; }
 .stat-cards span, .stat-cards small { display: block; color: var(--muted); font-size: 11px; }.stat-cards strong { display: block; font-size: 30px; margin: 7px 0 4px; letter-spacing: -.04em; }
-.knowledge-section, .focus-section { margin-top: 18px; }
+.weekly-section, .knowledge-section, .focus-section { margin-top: 18px; }
+.weekly-section .card-heading { align-items: center; }
+.weekly-summary { display: grid; grid-template-columns: repeat(4, auto); gap: 8px; }
+.weekly-summary span { min-width: 92px; padding: 9px 11px; border-radius: 12px; background: #f6f2eb; color: var(--muted); font-size: 9px; text-align: center; }
+.weekly-summary strong { display: block; margin-bottom: 2px; color: var(--ink); font-size: 15px; }
+.weekly-scroll { overflow-x: auto; padding-top: 22px; }
+.weekly-chart { min-width: 560px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; }
+.day-column { display: grid; grid-template-rows: 20px 112px auto auto auto; justify-items: center; gap: 4px; color: var(--muted); }
+.day-column > strong { color: var(--ink); font-size: 13px; }
+.day-bar-track { width: min(44px, 72%); height: 112px; display: flex; align-items: flex-end; padding: 3px; border-radius: 12px; background: #f0ece5; }
+.day-bar-track i { width: 100%; min-height: 0; border-radius: 8px; transition: height .25s ease; }
+.day-column b { color: var(--ink); font-size: 11px; text-transform: capitalize; }
+.day-column > span, .day-column > small { font-size: 9px; }
+.day-column > small { min-width: 38px; padding: 3px 6px; border-radius: 99px; background: #f4f0e9; text-align: center; font-weight: 800; }
+.day-column.today b { color: var(--purple); }
 .accuracy-legend { display: flex; align-items: center; gap: 16px; color: var(--muted); }
 .empty-legend { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 10px; }
 .empty-legend i { width: 12px; height: 12px; border-radius: 4px; background: #eeeae3; border: 1px solid #ded9d0; }
@@ -235,7 +249,7 @@ button:focus-visible { outline: 4px solid rgba(117, 86, 232, 0.24); outline-offs
   .mascot { width: 150px; height: 150px; }
   .mascot-face { transform: translate(-50%,-50%) scale(.8); }
   .math-card-a { left: 24px; top: 40px; }.math-card-b { right: 24px; bottom: 35px; }
-  .progress-card, .mode-card, .knowledge-section, .focus-section { padding: 22px 18px; border-radius: 22px; }
+  .progress-card, .mode-card, .weekly-section, .knowledge-section, .focus-section { padding: 22px 18px; border-radius: 22px; }
   .progress-ring-row { gap: 22px; }
   .progress-ring { width: 100px; height: 100px; flex-basis: 100px; }
   .progress-legend p { display: block; }.progress-legend small { display: block; margin-top: 2px; }
@@ -255,6 +269,9 @@ button:focus-visible { outline: 4px solid rgba(117, 86, 232, 0.24); outline-offs
   .stats-intro .primary-button { width: 100%; }
   .stat-cards article { padding: 17px; }
   .stat-cards strong { font-size: 26px; }
+  .weekly-section .card-heading { align-items: stretch; }
+  .weekly-summary { grid-template-columns: repeat(2, 1fr); }
+  .weekly-summary span { min-width: 0; }
   .card-heading { display: grid; }
   .mini-legend { justify-content: flex-start; }
   .focus-row { grid-template-columns: 60px 1fr 40px; gap: 10px; }

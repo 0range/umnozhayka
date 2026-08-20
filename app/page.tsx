@@ -11,6 +11,12 @@ type FactStat = {
   lastAt: number;
 };
 
+type DayStat = {
+  answers: number;
+  correct: number;
+  timesMs: number[];
+};
+
 type ProgressData = {
   version: 1;
   facts: Record<string, FactStat>;
@@ -21,6 +27,7 @@ type ProgressData = {
   today: string;
   todayAnswers: number;
   todayCorrect: number;
+  days: Record<string, DayStat>;
 };
 
 type Question = {
@@ -40,6 +47,8 @@ const SOUND_KEY = "umnozhayka-sound";
 const TABLE_MIN = 2;
 const TABLE_MAX = 9;
 const TIME_SAMPLE_LIMIT = 25;
+const DAY_TIME_SAMPLE_LIMIT = 120;
+const DAY_HISTORY_LIMIT = 30;
 
 const emptyData = (): ProgressData => ({
   version: 1,
@@ -51,11 +60,37 @@ const emptyData = (): ProgressData => ({
   today: dayKey(),
   todayAnswers: 0,
   todayCorrect: 0,
+  days: {},
 });
 
-function dayKey() {
-  const now = new Date();
-  return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+function dayKey(date = new Date()) {
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+function parseDayKey(key: string) {
+  const [year, month, date] = key.split("-").map(Number);
+  if (!year || !month || !date) return null;
+  const parsed = new Date(year, month - 1, date, 12);
+  return dayKey(parsed) === key ? parsed : null;
+}
+
+function recentDayKeys(count: number) {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() - (count - index - 1));
+    return dayKey(date);
+  });
+}
+
+function trimDays(days: Record<string, DayStat>) {
+  return Object.fromEntries(
+    Object.entries(days)
+      .filter(([key]) => parseDayKey(key))
+      .sort(([a], [b]) => (parseDayKey(a)?.getTime() ?? 0) - (parseDayKey(b)?.getTime() ?? 0))
+      .slice(-DAY_HISTORY_LIMIT),
+  );
 }
 
 function factKey(a: number, b: number) {
@@ -124,6 +159,29 @@ function normalizeStoredProgress(raw: unknown): ProgressData {
   }
 
   const storedDay = typeof source.today === "string" ? source.today : fresh.today;
+  const days: Record<string, DayStat> = {};
+  const sourceDays = source.days && typeof source.days === "object" ? source.days : {};
+  for (const [key, rawDay] of Object.entries(sourceDays)) {
+    if (!parseDayKey(key) || !rawDay || typeof rawDay !== "object") continue;
+    const candidate = rawDay as Partial<DayStat>;
+    const answers = Math.floor(nonNegativeNumber(candidate.answers));
+    const correct = Math.min(answers, Math.floor(nonNegativeNumber(candidate.correct)));
+    const timesMs = Array.isArray(candidate.timesMs)
+      ? candidate.timesMs
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 400)
+        .map((value) => Math.min(30000, value))
+        .slice(-DAY_TIME_SAMPLE_LIMIT)
+      : [];
+    if (answers || timesMs.length) days[key] = { answers, correct, timesMs };
+  }
+  const legacyTodayAnswers = Math.floor(nonNegativeNumber(source.todayAnswers));
+  if (legacyTodayAnswers && parseDayKey(storedDay) && !days[storedDay]) {
+    days[storedDay] = {
+      answers: legacyTodayAnswers,
+      correct: Math.min(legacyTodayAnswers, Math.floor(nonNegativeNumber(source.todayCorrect))),
+      timesMs: [],
+    };
+  }
   const isToday = storedDay === dayKey();
   return {
     version: 1,
@@ -135,6 +193,7 @@ function normalizeStoredProgress(raw: unknown): ProgressData {
     today: dayKey(),
     todayAnswers: isToday ? Math.floor(nonNegativeNumber(source.todayAnswers)) : 0,
     todayCorrect: isToday ? Math.floor(nonNegativeNumber(source.todayCorrect)) : 0,
+    days: trimDays(days),
   };
 }
 
@@ -156,13 +215,17 @@ function accuracy(stat?: FactStat) {
   return stat.correct / stat.attempts;
 }
 
+function medianOf(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 function medianTimeMs(stat?: FactStat) {
-  if (!stat?.timesMs.length) return 0;
-  const values = [...stat.timesMs].sort((a, b) => a - b);
-  const middle = Math.floor(values.length / 2);
-  return values.length % 2
-    ? values[middle]
-    : (values[middle - 1] + values[middle]) / 2;
+  return stat ? medianOf(stat.timesMs) : 0;
 }
 
 function speedScore(stat?: FactStat) {
@@ -191,9 +254,7 @@ function knowledgeCellColor(stat?: FactStat) {
 
   const percent = Math.round(accuracy(stat) * 100);
   const speed = speedScore(stat);
-  const hue = percent <= 50
-    ? 4 + (percent / 50) * 44
-    : 48 + ((percent - 50) / 50) * 92;
+  const hue = accuracyHue(percent);
   const saturation = 55 + speed * 29;
   const lightness = 87 - percent * 0.29 + (1 - speed) * 5;
   const color = percent < 40 ? "#74291f" : percent < 65 ? "#5f5010" : "#0b5030";
@@ -203,6 +264,22 @@ function knowledgeCellColor(stat?: FactStat) {
     borderColor: `hsl(${hue} ${48 + speed * 22}% ${Math.max(38, lightness - 13)}%)`,
     color,
   };
+}
+
+function accuracyHue(percent: number) {
+  return percent <= 50
+    ? 4 + (percent / 50) * 44
+    : 48 + ((percent - 50) / 50) * 92;
+}
+
+function dayLabel(key: string) {
+  const date = parseDayKey(key);
+  return date ? new Intl.DateTimeFormat("ru-RU", { weekday: "short" }).format(date).replace(".", "") : "";
+}
+
+function dateLabel(key: string) {
+  const date = parseDayKey(key);
+  return date ? new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" }).format(date).replace(".", "") : "";
 }
 
 function makeOptions(a: number, b: number) {
@@ -421,16 +498,26 @@ export default function Home() {
     const isCorrect = value === question.answer;
     const elapsed = Math.min(30000, Math.max(400, Date.now() - questionStartedAt.current));
     const oldStat = dataRef.current.facts[question.key] ?? { attempts: 0, correct: 0, totalMs: 0, timesMs: [], streak: 0, lastAt: 0 };
+    const currentDay = dayKey();
+    const oldDay = dataRef.current.days[currentDay] ?? { answers: 0, correct: 0, timesMs: [] };
     const newStreak = isCorrect ? oldStat.streak + 1 : 0;
-    const todayChanged = dataRef.current.today !== dayKey();
+    const todayChanged = dataRef.current.today !== currentDay;
     const next: ProgressData = {
       ...dataRef.current,
-      today: dayKey(),
+      today: currentDay,
       todayAnswers: (todayChanged ? 0 : dataRef.current.todayAnswers) + 1,
       todayCorrect: (todayChanged ? 0 : dataRef.current.todayCorrect) + (isCorrect ? 1 : 0),
       totalAnswers: dataRef.current.totalAnswers + 1,
       totalCorrect: dataRef.current.totalCorrect + (isCorrect ? 1 : 0),
       bestStreak: Math.max(dataRef.current.bestStreak, isCorrect ? sessionStreak + 1 : sessionStreak),
+      days: trimDays({
+        ...dataRef.current.days,
+        [currentDay]: {
+          answers: oldDay.answers + 1,
+          correct: oldDay.correct + (isCorrect ? 1 : 0),
+          timesMs: [...oldDay.timesMs, elapsed].slice(-DAY_TIME_SAMPLE_LIMIT),
+        },
+      }),
       facts: {
         ...dataRef.current.facts,
         [question.key]: {
@@ -482,6 +569,24 @@ export default function Home() {
       .slice(0, 5);
     return { mastered, learning, weak };
   }, [data]);
+
+  const week = useMemo(() => {
+    const days = recentDayKeys(7).map((key) => ({
+      key,
+      ...(data.days[key] ?? { answers: 0, correct: 0, timesMs: [] }),
+    }));
+    const answers = days.reduce((sum, day) => sum + day.answers, 0);
+    const correct = days.reduce((sum, day) => sum + day.correct, 0);
+    const timesMs = days.flatMap((day) => day.timesMs);
+    return {
+      days,
+      answers,
+      correct,
+      medianMs: medianOf(timesMs),
+      activeDays: days.filter((day) => day.answers > 0).length,
+      maxAnswers: Math.max(1, ...days.map((day) => day.answers)),
+    };
+  }, [data.days]);
 
   function resetProgress() {
     if (!window.confirm("Стереть всю статистику и начать заново?")) return;
@@ -660,6 +765,35 @@ export default function Home() {
             <article><span>Точность</span><strong>{formatPercent(data.totalCorrect, data.totalAnswers)}</strong><small>{data.totalCorrect} верных ответов</small></article>
             <article><span>Лучшая серия</span><strong>{data.bestStreak} 🔥</strong><small>ответов подряд</small></article>
             <article><span>Знаю отлично</span><strong>{stats.mastered}</strong><small>из {FACT_KEYS.length} примеров</small></article>
+          </section>
+
+          <section className="weekly-section">
+            <div className="card-heading">
+              <div><span className="section-kicker">Последние 7 дней</span><h2>Неделя в цифрах</h2></div>
+              <div className="weekly-summary">
+                <span><strong>{week.answers}</strong> примеров</span>
+                <span><strong>{formatPercent(week.correct, week.answers)}</strong> точность</span>
+                <span><strong>{week.medianMs ? `${(week.medianMs / 1000).toFixed(1)} с` : "—"}</strong> медиана</span>
+                <span><strong>{week.activeDays}/7</strong> активных дней</span>
+              </div>
+            </div>
+            <div className="weekly-scroll">
+              <div className="weekly-chart" role="list" aria-label="Результаты за последние семь дней">
+                {week.days.map((day) => {
+                  const percent = day.answers ? Math.round((day.correct / day.answers) * 100) : 0;
+                  const barHeight = day.answers ? Math.max(10, Math.round((day.answers / week.maxAnswers) * 100)) : 0;
+                  return (
+                    <article className={`day-column ${day.key === dayKey() ? "today" : ""}`} role="listitem" key={day.key} title={`${dateLabel(day.key)}: ${day.answers} примеров, ${formatPercent(day.correct, day.answers)} верно`}>
+                      <strong>{day.answers || "—"}</strong>
+                      <div className="day-bar-track"><i style={{ height: `${barHeight}%`, backgroundColor: day.answers ? `hsl(${accuracyHue(percent)} 74% 58%)` : undefined }} /></div>
+                      <b>{dayLabel(day.key)}</b>
+                      <span>{dateLabel(day.key)}</span>
+                      <small>{formatPercent(day.correct, day.answers)}</small>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
           </section>
 
           <section className="knowledge-section">
