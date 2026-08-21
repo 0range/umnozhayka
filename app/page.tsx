@@ -378,7 +378,7 @@ export default function Home() {
 
   useEffect(() => {
     // Ask supported browsers not to evict the child's progress automatically.
-    // Reinstalling the app from this same origin keeps the stable localStorage keys.
+    // The home-screen shortcut stays in the browser so it shares these stable keys.
     void navigator.storage?.persist?.().catch(() => undefined);
     try {
       const stored = loadStoredProgress(window.localStorage);
@@ -626,6 +626,15 @@ export default function Home() {
               <div className="welcome-copy">
                 <div className="eyebrow"><span className="live-dot" /> Сегодня</div>
                 <h1>Привет, Соня! <span>Потренируемся?</span></h1>
+              </div>
+              <div className="welcome-visual" aria-hidden="true">
+                <span className="welcome-equation">6 × 7</span>
+                <div className="mascot welcome-mascot">
+                  <span className="mascot-ray ray-one" />
+                  <span className="mascot-ray ray-two" />
+                  <span className="mascot-ray ray-three" />
+                  <span className="mascot-face"><i /><i /><b /></span>
+                </div>
               </div>
               <div className="today-summary" aria-label="Результаты за сегодня">
                 <span><strong>{data.todayAnswers}</strong><small>примеров</small></span>
