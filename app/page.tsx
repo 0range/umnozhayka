@@ -377,9 +377,13 @@ export default function Home() {
   const nextTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // Ask supported browsers not to evict the child's progress automatically.
+    // Reinstalling the app from this same origin keeps the stable localStorage keys.
+    void navigator.storage?.persist?.().catch(() => undefined);
     try {
       const stored = loadStoredProgress(window.localStorage);
       if (stored) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate saved progress after the client mounts
         setData(stored);
         dataRef.current = stored;
       }
