@@ -621,66 +621,66 @@ export default function Home() {
 
       {screen === "home" && (
         <div className="page home-page">
-          <section className="hero-card">
-            <div className="hero-copy">
-              <div className="eyebrow"><span className="live-dot" /> Тренировка на сегодня</div>
-              <h1>Привет, Соня!<br /><span>Прокачаем умножение?</span></h1>
-              <p>Выбери, как отвечать. В обоих режимах приложение само поймёт, что уже отлично получается, а что стоит повторить.</p>
-              <div className="hero-actions" aria-label="Режим тренировки">
-                <button className="primary-button" onClick={() => startGame("choice")}>
-                  <span className="button-icon" aria-hidden="true">✓</span> Выбрать ответ
-                </button>
-                <button className="secondary-button hero-secondary" onClick={() => startGame("input")}>
-                  <span className="button-icon keypad-symbol" aria-hidden="true">123</span> Ввести самому
-                </button>
+          <div className="home-dashboard">
+            <section className="welcome-strip">
+              <div className="welcome-copy">
+                <div className="eyebrow"><span className="live-dot" /> Сегодня</div>
+                <h1>Привет, Соня! <span>Потренируемся?</span></h1>
               </div>
-              <div className="today-line">
-                <span>Сегодня</span>
-                <strong>{data.todayAnswers} примеров</strong>
+              <div className="today-summary" aria-label="Результаты за сегодня">
+                <span><strong>{data.todayAnswers}</strong><small>примеров</small></span>
                 <i />
-                <strong>{formatPercent(data.todayCorrect, data.todayAnswers)} верно</strong>
+                <span><strong>{formatPercent(data.todayCorrect, data.todayAnswers)}</strong><small>верно</small></span>
               </div>
-            </div>
-            <div className="hero-visual" aria-hidden="true">
-              <div className="orbit orbit-one" />
-              <div className="orbit orbit-two" />
-              <div className="math-card math-card-a">7 × 8</div>
-              <div className="math-card math-card-b">6 × 4</div>
-              <div className="mascot">
-                <span className="mascot-ray ray-one" />
-                <span className="mascot-ray ray-two" />
-                <span className="mascot-ray ray-three" />
-                <span className="mascot-face"><i /><i /><b /></span>
-              </div>
-              <div className="spark spark-a">✦</div>
-              <div className="spark spark-b">✦</div>
-            </div>
-          </section>
+            </section>
 
-          <section className="quick-grid" aria-label="Прогресс и режимы">
-            <article className="progress-card">
-              <div className="card-heading">
-                <div><span className="section-kicker">Твой прогресс</span><h2>Карта знаний</h2></div>
-                <button className="text-button" onClick={() => setScreen("stats")}>Подробнее →</button>
+            <section className="home-mode-panel" aria-labelledby="mode-heading">
+              <div className="home-section-heading">
+                <div><span className="section-kicker">Играть</span><h2 id="mode-heading">Выбери режим</h2></div>
+                <p>Тренировка сама чаще подбирает сложные и долгие примеры.</p>
               </div>
-              <div className="progress-ring-row">
-                <div className="progress-ring" style={{ "--progress": `${Math.round((stats.mastered / FACT_KEYS.length) * 100) * 3.6}deg` } as React.CSSProperties}>
-                  <div><strong>{stats.mastered}</strong><span>из {FACT_KEYS.length}</span></div>
-                </div>
-                <div className="progress-legend">
-                  <div><span className="legend-dot mastered" /><p><strong>Знаю отлично</strong><small>{stats.mastered} примеров</small></p></div>
-                  <div><span className="legend-dot learning" /><p><strong>Учу сейчас</strong><small>{stats.learning} примеров</small></p></div>
-                  <div><span className="legend-dot new" /><p><strong>Ещё не встречались</strong><small>{FACT_KEYS.length - stats.mastered - stats.learning} примеров</small></p></div>
-                </div>
+              <div className="home-mode-grid">
+                <button className="home-mode-button choice-mode" onClick={() => startGame("choice")}>
+                  <span className="home-mode-icon" aria-hidden="true">✓</span>
+                  <span className="home-mode-copy"><strong>Выбрать ответ</strong><small>12 умных примеров</small></span>
+                  <span className="home-mode-arrow" aria-hidden="true">→</span>
+                </button>
+                <button className="home-mode-button input-mode" onClick={() => startGame("input")}>
+                  <span className="home-mode-icon keypad-symbol" aria-hidden="true">123</span>
+                  <span className="home-mode-copy"><strong>Ввести самому</strong><small>12 умных примеров</small></span>
+                  <span className="home-mode-arrow" aria-hidden="true">→</span>
+                </button>
+                <button className="home-mode-button test-mode" onClick={() => startGame("test")}>
+                  <span className="home-mode-icon keypad-symbol" aria-hidden="true">20</span>
+                  <span className="home-mode-copy"><strong>Большая проверка</strong><small>20 случайных примеров</small></span>
+                  <span className="home-mode-arrow" aria-hidden="true">→</span>
+                </button>
               </div>
-            </article>
+            </section>
 
-            <article className="mode-card test-card">
-              <div className="mode-icon keypad-symbol">123</div>
-              <div><span className="section-kicker">Тестовый режим</span><h2>Большая проверка</h2><p>20 случайных примеров. Ответ всегда вводишь сам.</p></div>
-              <button className="secondary-button" onClick={() => startGame("test")}>Начать</button>
-            </article>
-          </section>
+            <button
+              className="home-progress-card"
+              onClick={() => setScreen("stats")}
+              aria-label="Открыть подробные результаты и карту знаний"
+            >
+              <span className="home-progress-copy">
+                <span className="section-kicker">Твой прогресс</span>
+                <strong>Мои результаты</strong>
+                <small>Точность, скорость и карта знаний</small>
+              </span>
+              <span className="home-progress-summary">
+                <span className="mini-progress-ring" style={{ "--progress": `${Math.round((stats.mastered / FACT_KEYS.length) * 100) * 3.6}deg` } as React.CSSProperties}>
+                  <span><strong>{stats.mastered}</strong><small>из {FACT_KEYS.length}</small></span>
+                </span>
+                <span className="home-progress-numbers">
+                  <span><strong>{stats.mastered}</strong><small>знаю</small></span>
+                  <span><strong>{stats.learning}</strong><small>учу</small></span>
+                  <span><strong>{FACT_KEYS.length - stats.mastered - stats.learning}</strong><small>новых</small></span>
+                </span>
+              </span>
+              <span className="home-progress-link">Открыть карту <b aria-hidden="true">→</b></span>
+            </button>
+          </div>
         </div>
       )}
 

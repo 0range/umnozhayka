@@ -36,6 +36,14 @@ test("renders development preview metadata", async () => {
   assert.match(html, /rel=["']apple-touch-icon["'][^>]*href=["']\/apple-touch-icon\.png["']/i);
 });
 
+test("makes the whole compact results card interactive", async () => {
+  const pageUrl = new URL("../app/page.tsx", import.meta.url);
+  const source = await readFile(pageUrl, "utf8");
+
+  assert.match(source, /<button[\s\S]*?className="home-progress-card"[\s\S]*?aria-label="Открыть подробные результаты и карту знаний"/);
+  assert.doesNotMatch(source, /className="hero-visual"/);
+});
+
 test("publishes an installable manifest without changing the app origin", async () => {
   const manifestUrl = new URL("../public/manifest.webmanifest", import.meta.url);
   const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
