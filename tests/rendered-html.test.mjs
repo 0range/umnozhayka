@@ -32,8 +32,9 @@ test("renders development preview metadata", async () => {
   );
   const html = await response.text();
   assert.match(html, developmentPreviewMeta);
-  assert.match(html, /rel=["']manifest["'][^>]*href=["']\/manifest\.webmanifest["']/i);
-  assert.match(html, /rel=["']apple-touch-icon["'][^>]*href=["']\/apple-touch-icon\.png["']/i);
+  assert.match(html, /rel=["']apple-touch-icon["'][^>]*href=["']\/apple-touch-icon-thoughtful\.png["']/i);
+  assert.doesNotMatch(html, /rel=["']manifest["']/i);
+  assert.doesNotMatch(html, /name=["']apple-mobile-web-app-capable["']/i);
 });
 
 test("makes the whole compact results card interactive", async () => {
@@ -42,28 +43,17 @@ test("makes the whole compact results card interactive", async () => {
 
   assert.match(source, /<button[\s\S]*?className="home-progress-card"[\s\S]*?aria-label="Открыть подробные результаты и карту знаний"/);
   assert.doesNotMatch(source, /className="hero-visual"/);
+  assert.match(source, /className="welcome-visual"/);
+  assert.match(source, /const STORAGE_KEY = "umnozhayka-progress-v1"/);
+  assert.match(source, /const STORAGE_BACKUP_KEY = "umnozhayka-progress-backup-v1"/);
 });
 
-test("publishes an installable manifest without changing the app origin", async () => {
-  const manifestUrl = new URL("../public/manifest.webmanifest", import.meta.url);
-  const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
-
-  assert.equal(manifest.name, "Умножайка — таблица умножения");
-  assert.equal(manifest.id, "/");
-  assert.equal(manifest.start_url, "/");
-  assert.equal(manifest.scope, "/");
-  assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
-  assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
-  assert.ok(manifest.icons.some((icon) => icon.purpose === "maskable"));
-});
-
-test("ships every app icon at its declared PNG size", async () => {
+test("ships every shortcut icon at its declared PNG size", async () => {
   const expectedSizes = new Map([
-    ["favicon-32.png", 32],
-    ["apple-touch-icon.png", 180],
-    ["icon-192.png", 192],
-    ["icon-512.png", 512],
-    ["icon-maskable-512.png", 512],
+    ["favicon-thoughtful-32.png", 32],
+    ["apple-touch-icon-thoughtful.png", 180],
+    ["icon-thoughtful-192.png", 192],
+    ["icon-thoughtful-512.png", 512],
   ]);
 
   for (const [fileName, expectedSize] of expectedSizes) {
