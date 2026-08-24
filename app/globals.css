@@ -314,6 +314,14 @@ button:focus-visible { outline: 4px solid rgba(117, 86, 232, 0.24); outline-offs
 .focus-equation { font-weight: 900; }.focus-row strong { font-size: 13px; }.focus-row small { color: var(--muted); font-size: 11px; }
 .focus-bar { height: 7px; background: #e3ded5; border-radius: 99px; overflow: hidden; }.focus-bar i { display: block; height: 100%; background: var(--coral); border-radius: inherit; }
 .empty-focus { margin-top: 22px; display: flex; gap: 13px; align-items: center; color: var(--muted); padding: 18px; background: #f7f3eb; border-radius: 16px; }.empty-focus > span { color: var(--purple); font-size: 25px; }.empty-focus p { margin: 0; }.empty-focus strong { color: var(--ink); }
+.analytics-setting { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 24px; padding: 15px 16px; border-radius: 16px; background: #f7f3eb; }
+.analytics-setting > span { display: grid; gap: 3px; }
+.analytics-setting strong { color: var(--ink); font-size: 12px; }
+.analytics-setting small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.analytics-setting button { flex: 0 0 auto; min-width: 102px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 11px; border: 1px solid #d9d3c9; border-radius: 99px; background: white; color: var(--muted); font-size: 10px; font-weight: 850; cursor: pointer; }
+.analytics-setting button i { width: 10px; height: 10px; border-radius: 50%; background: #c8c1b8; }
+.analytics-setting button.enabled { border-color: #acdcca; background: #ebf9f3; color: #197854; }
+.analytics-setting button.enabled i { background: var(--green); }
 .reset-button { display: block; margin: 25px 0 0 auto; border: 0; background: transparent; color: #a59eaa; font-size: 11px; cursor: pointer; text-decoration: underline; }
 .loading { min-height: 100vh; display: grid; place-items: center; color: var(--purple); font-weight: 800; }
 
@@ -411,6 +419,8 @@ button:focus-visible { outline: 4px solid rgba(117, 86, 232, 0.24); outline-offs
   .mini-legend { justify-content: flex-start; }
   .focus-row { grid-template-columns: 60px 1fr 40px; gap: 10px; }
   .focus-row small { grid-column: 1 / -1; }
+  .analytics-setting { align-items: stretch; display: grid; }
+  .analytics-setting button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

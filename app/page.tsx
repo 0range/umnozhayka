@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  analyticsConfigured,
+  setAnalyticsConsent,
+  trackAnalytics,
+  useAnalyticsConsent,
+} from "./analytics";
 
 type FactStat = {
   attempts: number;
@@ -353,6 +359,27 @@ function medianTime(stat?: FactStat) {
   return `${(median / 1000).toFixed(1)} с`;
 }
 
+function accuracyBucket(correct: number, total: number) {
+  const percent = total ? (correct / total) * 100 : 0;
+  if (percent < 50) return "under_50";
+  if (percent < 80) return "50_79";
+  return "80_100";
+}
+
+function timeBucket(milliseconds: number) {
+  if (milliseconds < 3000) return "under_3s";
+  if (milliseconds < 6000) return "3_6s";
+  if (milliseconds < 10000) return "6_10s";
+  return "over_10s";
+}
+
+function answerCountBucket(count: number) {
+  if (count <= 0) return "0";
+  if (count <= 3) return "1_3";
+  if (count <= 7) return "4_7";
+  return "8_plus";
+}
+
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("home");
   const [data, setData] = useState<ProgressData>(emptyData);
@@ -371,7 +398,9 @@ export default function Home() {
   const [sessionBest, setSessionBest] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState(Date.now());
   const [sessionDuration, setSessionDuration] = useState(0);
+  const analyticsEnabled = useAnalyticsConsent();
   const questionStartedAt = useRef(Date.now());
+  const sessionTimes = useRef<number[]>([]);
   const recentKeys = useRef<string[]>([]);
   const retryQueue = useRef<Array<{ key: string; due: number }>>([]);
   const nextTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -481,11 +510,37 @@ export default function Home() {
     setFeedback(null);
     retryQueue.current = [];
     recentKeys.current = [];
+    sessionTimes.current = [];
     const key = chooseWeightedKey(dataRef.current, nextMode, []);
     recentKeys.current.push(key);
     setQuestion(buildQuestion(key));
     questionStartedAt.current = Date.now();
     setScreen("game");
+    trackAnalytics("game_start", { mode: nextMode, target: nextTarget });
+  }
+
+  function openStats(source: "navigation" | "home_card" | "summary") {
+    if (screen === "game") {
+      trackAnalytics("game_exit", {
+        mode,
+        answered: answerCountBucket(questionNumber - (selected === null ? 1 : 0)),
+        destination: "stats",
+      });
+    }
+    trackAnalytics("stats_open", { source });
+    setScreen("stats");
+  }
+
+  function goHome(source: "brand" | "navigation" | "game_close") {
+    if (screen === "game") {
+      trackAnalytics("game_exit", {
+        mode,
+        answered: answerCountBucket(questionNumber - (selected === null ? 1 : 0)),
+        destination: "home",
+        source,
+      });
+    }
+    setScreen("home");
   }
 
   function appendDigit(digit: string) {
@@ -501,6 +556,14 @@ export default function Home() {
     if (selected !== null) return;
     const isCorrect = value === question.answer;
     const elapsed = Math.min(30000, Math.max(400, Date.now() - questionStartedAt.current));
+    sessionTimes.current.push(elapsed);
+    if (questionNumber === 1) {
+      trackAnalytics("first_answer", {
+        mode,
+        correct: isCorrect,
+        response_time: timeBucket(elapsed),
+      });
+    }
     const oldStat = dataRef.current.facts[question.key] ?? { attempts: 0, correct: 0, totalMs: 0, timesMs: [], streak: 0, lastAt: 0 };
     const currentDay = dayKey();
     const oldDay = dataRef.current.days[currentDay] ?? { answers: 0, correct: 0, timesMs: [] };
@@ -548,7 +611,17 @@ export default function Home() {
       if (questionNumber >= target) {
         const finished: ProgressData = { ...dataRef.current, sessions: dataRef.current.sessions + 1 };
         persist(finished);
-        setSessionDuration(Date.now() - sessionStartedAt);
+        const duration = Date.now() - sessionStartedAt;
+        const finalCorrect = sessionCorrect + (isCorrect ? 1 : 0);
+        setSessionDuration(duration);
+        trackAnalytics("game_complete", {
+          mode,
+          target,
+          accuracy: accuracyBucket(finalCorrect, target),
+          median_time: timeBucket(medianOf(sessionTimes.current)),
+          duration: timeBucket(duration / target),
+          best_streak: Math.max(sessionBest, nextSessionStreak) >= 5 ? "5_plus" : "under_5",
+        });
         setScreen("summary");
         return;
       }
@@ -596,6 +669,7 @@ export default function Home() {
     if (!window.confirm("Стереть всю статистику и начать заново?")) return;
     const fresh = emptyData();
     persist(fresh);
+    trackAnalytics("progress_reset");
     setScreen("home");
   }
 
@@ -606,13 +680,13 @@ export default function Home() {
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
       <header className="topbar">
-        <button className="brand" onClick={() => setScreen("home")} aria-label="На главную">
+        <button className="brand" onClick={() => goHome("brand")} aria-label="На главную">
           <span className="brand-mark" aria-hidden="true">×</span>
           <span>Умножайка</span>
         </button>
         <nav className="main-nav" aria-label="Главное меню">
-          <button className={screen === "home" ? "active" : ""} onClick={() => setScreen("home")}>Играть</button>
-          <button className={screen === "stats" ? "active" : ""} onClick={() => setScreen("stats")}>Мои знания</button>
+          <button className={screen === "home" ? "active" : ""} onClick={() => goHome("navigation")}>Играть</button>
+          <button className={screen === "stats" ? "active" : ""} onClick={() => openStats("navigation")}>Мои знания</button>
         </nav>
         <button className="sound-button" onClick={toggleSound} aria-label={soundOn ? "Выключить звук" : "Включить звук"}>
           {soundOn ? "♪" : "♪̸"}
@@ -669,7 +743,7 @@ export default function Home() {
 
             <button
               className="home-progress-card"
-              onClick={() => setScreen("stats")}
+              onClick={() => openStats("home_card")}
               aria-label="Открыть подробные результаты и карту знаний"
             >
               <span className="home-progress-copy">
@@ -697,7 +771,7 @@ export default function Home() {
         <div className="page game-page">
           <section className={`game-card ${feedback ?? ""}`}>
             <div className="game-head">
-              <button className="close-button" onClick={() => setScreen("home")} aria-label="Закончить тренировку">×</button>
+              <button className="close-button" onClick={() => goHome("game_close")} aria-label="Закончить тренировку">×</button>
               <div className="game-progress" aria-label={`Пример ${questionNumber} из ${target}`}>
                 <span style={{ width: `${(questionNumber / target) * 100}%` }} />
               </div>
@@ -760,7 +834,7 @@ export default function Home() {
             </div>
             <div className="summary-actions">
               <button className="primary-button" onClick={() => startGame(mode)}>Ещё раунд</button>
-              <button className="secondary-button" onClick={() => setScreen("stats")}>Посмотреть знания</button>
+              <button className="secondary-button" onClick={() => openStats("summary")}>Посмотреть знания</button>
             </div>
           </section>
         </div>
@@ -859,6 +933,24 @@ export default function Home() {
               </div>
             ) : (
               <div className="empty-focus"><span>✦</span><p><strong>Сначала сыграем!</strong> После первой тренировки здесь появятся примеры для повторения.</p></div>
+            )}
+            {analyticsConfigured() && (
+              <div className="analytics-setting">
+                <span>
+                  <strong>Анонимная статистика игры</strong>
+                  <small>Только запуски режимов и завершение тренировок. Ответы и карта знаний не отправляются.</small>
+                </span>
+                <button
+                  type="button"
+                  className={analyticsEnabled ? "enabled" : ""}
+                  role="switch"
+                  aria-checked={analyticsEnabled}
+                  onClick={() => setAnalyticsConsent(!analyticsEnabled)}
+                >
+                  <i aria-hidden="true" />
+                  {analyticsEnabled ? "Включена" : "Выключена"}
+                </button>
+              </div>
             )}
             <button className="reset-button" onClick={resetProgress}>Сбросить статистику</button>
           </section>

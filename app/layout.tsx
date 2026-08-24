@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { YandexMetrika } from "./analytics";
 
 export const viewport: Viewport = {
   themeColor: "#b7655b",
@@ -27,7 +28,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ru">
-      <body>{children}</body>
+      <body>
+        {children}
+        <YandexMetrika />
+      </body>
     </html>
   );
 }
