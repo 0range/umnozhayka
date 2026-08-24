@@ -64,3 +64,20 @@ test("ships every shortcut icon at its declared PNG size", async () => {
     assert.equal(png.readUInt32BE(20), expectedSize, `${fileName} height`);
   }
 });
+
+test("keeps analytics privacy-first and separate from learning progress", async () => {
+  const analyticsUrl = new URL("../app/analytics.tsx", import.meta.url);
+  const pageUrl = new URL("../app/page.tsx", import.meta.url);
+  const analytics = await readFile(analyticsUrl, "utf8");
+  const page = await readFile(pageUrl, "utf8");
+
+  assert.match(analytics, /const METRIKA_ID = 111892328/);
+  assert.match(analytics, /webvisor:\s*false/);
+  assert.match(analytics, /clickmap:\s*false/);
+  assert.match(analytics, /getAnalyticsConsent\(\)/);
+  assert.match(page, /trackAnalytics\("game_start"/);
+  assert.match(page, /trackAnalytics\("game_complete"/);
+  assert.match(page, /trackAnalytics\("game_exit"/);
+  assert.doesNotMatch(analytics, /userParams|UserID/);
+  assert.doesNotMatch(page, /trackAnalytics\([^\n]+question\.key/);
+});
